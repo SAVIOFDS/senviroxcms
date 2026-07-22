@@ -1,0 +1,11 @@
+process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = 'test-jwt-secret-at-least-32-characters-long';
+process.env.CORS_ORIGIN = 'http://localhost:3000';
+process.env.LOG_LEVEL = 'error';
+process.env.REDIS_URL = 'redis://127.0.0.1:6379/15';
+process.env.SUPABASE_URL = '';
+process.env.SUPABASE_ANON_KEY = '';
+process.env.SUPABASE_SERVICE_ROLE_KEY = '';
+process.env.METRICS_TOKEN = '';
+process.env.USER_STORE = 'memory';
+process.env.DATA_DIR = './.test-data';
