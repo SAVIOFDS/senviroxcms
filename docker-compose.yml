@@ -1,0 +1,161 @@
+name: senvirox
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '20m'
+    max-file: '5'
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - ${REDIS_PASSWORD}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG']
+      interval: 10s
+      timeout: 3s
+      retries: 8
+      start_period: 10s
+    networks:
+      - senvirox-net
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: senvirox-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 5000
+      DATA_DIR: /data
+      USER_STORE: ${USER_STORE:-file}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      METRICS_TOKEN: ${METRICS_TOKEN}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+    volumes:
+      - backend-data:/data
+    expose:
+      - '5000'
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:5000/health/live']
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 25s
+    networks:
+      - senvirox-net
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    # data dir must be writable for file user store
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-SENVIROX}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+    image: senvirox-frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    expose:
+      - '3000'
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/']
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    networks:
+      - senvirox-net
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  nginx:
+    build:
+      context: ./deploy/nginx
+      dockerfile: Dockerfile
+    image: senvirox-nginx:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./deploy/ssl:/etc/nginx/ssl:ro
+      - certbot-www:/var/www/certbot:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1/nginx-health']
+      interval: 20s
+      timeout: 3s
+      retries: 5
+    networks:
+      - senvirox-net
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  senvirox-net:
+    driver: bridge
+
+volumes:
+  redis-data:
+  backend-data:
+  certbot-www:
